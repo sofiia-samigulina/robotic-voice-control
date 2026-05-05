@@ -11,21 +11,17 @@ from vosk import Model
 from Rosmaster_Lib import Rosmaster
 
 import rospy
-from std_msgs.msg import String, Float32, Int32, Bool
+from std_msgs.msg import Float32
 import threading
 import numpy as np
 from math import pi
 from time import sleep
 from yahboomcar_msgs.msg import *
 from yahboomcar_msgs.srv import *
-from geometry_msgs.msg import Twist
-from dynamic_reconfigure.server import Server
-from yahboomcar_bringup.cfg import PIDparamConfig
-from sensor_msgs.msg import Imu, MagneticField, JointState
+from sensor_msgs.msg import JointState
 from voice_arm_library import *
 
 from ultralytics import YOLO
-import cv2 as cv
 from visionworker import VisionWorker
 
 WHISPER = whisper.load_model("base.en")
@@ -33,39 +29,44 @@ VOSK_PATH = "/root/data/shared/sofiia_ws/src/voice_ctrl_sofiia/models/vosk-model
 YOLO_PATH = "/root/data/shared/sofiia_ws/src/voice_ctrl_sofiia/models/my_model.pt"
 VOSK = Model(VOSK_PATH)
 
+car = Rosmaster()
+factory = SpeechFactory()
+spe = factory.create_speech("vosk", VOSK)
+sleep(1.0)
+
 class sofiia_car_driver:
     def __init__(self):
         rospy.on_shutdown(self.cancel)
 
-        self.car = Rosmaster()
-        self.factory = SpeechFactory()
-        self.spe = self.factory.create_speech("whisper", WHISPER)
-        self.voice_arm = Voice_Arm()
+        #inicialization of car
+        self.car = car
         self.car.set_car_type(2)
-        self.last_update_time = 1
-        self.pos = [0, 0, 0, 0]
-        self.imu_link = rospy.get_param("~imu_link", "imu_link")
+
+        #inicialization of speech
+        self.spe = spe
+
+        #creating of voice_arm
+        self.voice_arm = Voice_Arm(self.car)
+        
+        #need for updating arm angles 
         self.Prefix = rospy.get_param("~prefix", "")
-        self.xlinear_limit = rospy.get_param('~xlinear_speed_limit', 1.0)
-        self.ylinear_limit = rospy.get_param('~ylinear_speed_limit', 1.0)
-        self.angular_limit = rospy.get_param('~angular_speed_limit', 5.0)
-        self.sub_cmd_vel = rospy.Subscriber('cmd_vel', Twist, self.cmd_vel_callback, queue_size=100)
-        self.sub_RGBLight = rospy.Subscriber("RGBLight", Int32, self.RGBLightcallback, queue_size=100)
-        self.sub_Buzzer = rospy.Subscriber("Buzzer", Bool, self.Buzzercallback, queue_size=100)
+       
+        #subscribers
         self.sub_Arm = rospy.Subscriber("TargetAngle", ArmJoint, self.Armcallback, queue_size=1000)
+        self.sub_Battery = rospy.Subscriber('voltage', Float32, self.battery_callback)
+        
+        #publishers
         self.ArmPubUpdate = rospy.Publisher("ArmAngleUpdate", ArmJoint, queue_size=1000)
-        self.EdiPublisher = rospy.Publisher('edition', Float32, queue_size=100)
         self.volPublisher = rospy.Publisher('voltage', Float32, queue_size=100)
         self.staPublisher = rospy.Publisher('joint_states', JointState, queue_size=100)
-        self.velPublisher = rospy.Publisher("/pub_vel", Twist, queue_size=100)
-        self.imuPublisher = rospy.Publisher("/pub_imu", Imu, queue_size=100)
-        self.magPublisher = rospy.Publisher("/pub_mag", MagneticField, queue_size=100)
-        self.srv_armAngle = rospy.Service("CurrentAngle", RobotArmArray, self.srv_Armcallback)
-        self.dyn_server = Server(PIDparamConfig, self.dynamic_reconfigure_callback)
+
         self.car.create_receive_threading()
+
+        #start pose of the car
         self.car.set_car_motion(0, 0, 0)
         self.joints = [90, 145, 0, 0, 90, 30]
         self.car.set_uart_servo_angle_array(self.joints, 1000)
+
         self.rotate_arm = 90
         self.run_time_ms = 0
 
@@ -75,6 +76,14 @@ class sofiia_car_driver:
         self.speech_thread = threading.Thread(target=self.listen_speech)
         self.speech_thread.daemon = True
         self.speech_thread.start()
+
+        #thread for battery
+        self.pub_battery = threading.Thread(target=self.pub_battery_voltage)
+        self.pub_battery.daemon = True
+        self.pub_battery.start()
+        self.battery_voltage = 0.0
+        self.battery_threshold_for_arm = 11.5
+        self.battery_threshold_all = 10.0
 
         #creating yolo model
         self.yolo_model = YOLO(YOLO_PATH)
@@ -86,99 +95,33 @@ class sofiia_car_driver:
         self.win = "YOLO"
         self.state = "IDLE"
 
-    def pub_data(self):
-        ## Publish the speed of the car, gyroscope data, and battery voltage
-        while not rospy.is_shutdown():
+    def pub_battery_voltage(self):
+        ## Publish the battery voltage
+        while not rospy.is_shutdown() and not self.spe.stop_evt.is_set():
             sleep(0.05)
-            imu = Imu()
-            twist = Twist()
             battery = Float32()
-            edition = Float32()
-            mag = MagneticField()
-            edition.data = self.car.get_version()
             battery.data = self.car.get_battery_voltage()
-            ax, ay, az = self.car.get_accelerometer_data()
-            gx, gy, gz = self.car.get_gyroscope_data()
-            mx, my, mz = self.car.get_magnetometer_data()
-            vx, vy, angular = self.car.get_motion_data()
-
-            # Publish gyroscope data
-            imu.header.stamp = rospy.Time.now()
-            imu.header.frame_id = self.imu_link
-            imu.linear_acceleration.x = ax
-            imu.linear_acceleration.y = ay
-            imu.linear_acceleration.z = az
-            imu.angular_velocity.x = gx
-            imu.angular_velocity.y = gy
-            imu.angular_velocity.z = gz
-            mag.header.stamp = rospy.Time.now()
-            mag.header.frame_id = self.imu_link
-            mag.magnetic_field.x = mx
-            mag.magnetic_field.y = my
-            mag.magnetic_field.z = mz
-            
-            # Publish the current linear vel and angular vel of the car
-            twist.linear.x = vx
-            twist.linear.y = vy
-            twist.angular.z = angular
-            self.velPublisher.publish(twist)
-            
-            self.imuPublisher.publish(imu)
-            self.magPublisher.publish(mag)
             self.volPublisher.publish(battery)
-            self.EdiPublisher.publish(edition)
-            self.joints_states_update()
+
+    def battery_callback(self, msg):
+        self.battery_voltage = msg.data
 
     def Armcallback(self, msg):
         if not isinstance(msg, ArmJoint): return
         arm_joint = ArmJoint()
         if len(msg.joints) != 0:
             arm_joint.joints = self.joints
-            for i in range(2):
-                self.car.set_uart_servo_angle_array(msg.joints, msg.run_time)
-                self.joints = list(msg.joints)
-                self.ArmPubUpdate.publish(arm_joint)
-                sleep(0.01)
+            self.car.set_uart_servo_angle_array(msg.joints, msg.run_time)
+            self.joints = list(msg.joints)
+            self.ArmPubUpdate.publish(arm_joint)     
         else:
             arm_joint.id = msg.id
             arm_joint.angle = msg.angle
-            for i in range(2):
-                self.car.set_uart_servo_angle(msg.id, msg.angle, msg.run_time)
-                self.joints[msg.id - 1] = msg.angle
-                self.ArmPubUpdate.publish(arm_joint)
-                sleep(0.01)
+            self.car.set_uart_servo_angle(msg.id, msg.angle, msg.run_time)
+            self.joints[msg.id - 1] = msg.angle
+            self.ArmPubUpdate.publish(arm_joint)
         self.joints_states_update()
-        
         sleep(0.001)
-
-    def srv_Armcallback(self, request):
-        # Server, the current joint angle of the robotic arm
-        if not isinstance(request, RobotArmArrayRequest): return
-        
-        response = RobotArmArrayResponse()
-        joints = self.car.get_uart_servo_angle_array()
-        response.angles = joints
-        
-        return response
-
-    def RGBLightcallback(self, msg):
-        if not isinstance(msg, Int32): return
-        for i in range(3):
-            self.car.set_colorful_effect(msg.data, 6, parm=1)
-            sleep(0.01)
-
-    def Buzzercallback(self, msg):
-        #Buzzer control
-        if not isinstance(msg, Bool): return
-        
-        if msg.data:
-            for i in range(3):
-                self.car.set_beep(1)
-                sleep(0.01)
-        else:
-            for i in range(3):
-                self.car.set_beep(0)
-                sleep(0.01)
 
     def listen_speech(self):
         while not rospy.is_shutdown() and not self.spe.stop_evt.is_set():
@@ -191,41 +134,33 @@ class sofiia_car_driver:
                 rospy.logwarn(f"Speech thread error: {e}")
                 if rospy.is_shutdown() or self.spe.stop_evt.is_set():
                     break
-   
-    def cmd_vel_callback(self,msg):
-        # Car motion control, subscriber callback function
-        if not isinstance(msg, Twist): return
-        # Issue linear vel and angular vel
-        vx = msg.linear.x
-        vy = msg.linear.y
-        angular = msg.angular.z
-        self.car.set_car_motion(vx, vy, angular)
     
     def cancel(self):
-        #stop camera thread
-        if hasattr(self, "vision") and self.vision is not None:
-            self.vision.stop()
-            self.vision.join(timeout=1.0)
-
-        self.spe.stop_stream()
-
-        if hasattr(self, "speech_thread") and self.speech_thread.is_alive():
-            self.speech_thread.join(timeout=1.0)
-
         #turn off all
         self.car.set_colorful_effect(0, 6, parm=1)
         self.car.set_car_motion(0, 0, 0)
         self.car.set_beep(0)
 
-        self.velPublisher.unregister()
-        self.imuPublisher.unregister()
-        self.EdiPublisher.unregister()
+        #stop camera thread
+        if hasattr(self, "vision") and self.vision is not None:
+            self.vision.stop()
+            self.vision.join(timeout=1.0)
+
+        #stop speech thread
+        self.spe.stop_stream()
+        if hasattr(self, "speech_thread") and self.speech_thread.is_alive():
+            self.speech_thread.join(timeout=1.0)
+
+        #stop battery thread
+        if hasattr(self, "pub_battery") and self.pub_battery.is_alive():
+            self.pub_battery.join(timeout=1.0)
+
+        self.sub_Arm.unregister()
+        self.sub_Battery.unregister()
         self.volPublisher.unregister()
         self.staPublisher.unregister()
-        self.magPublisher.unregister()
-        self.sub_cmd_vel.unregister()
-        self.sub_RGBLight.unregister()
-        self.sub_Buzzer.unregister()
+        self.ArmPubUpdate.unregister()
+
         # Always stop the robot when shutting down the node
         rospy.loginfo("Close the robot...")
         rospy.sleep(1)
@@ -249,17 +184,6 @@ class sofiia_car_driver:
         state.position = position_src
         self.staPublisher.publish(state)
 
-    def dynamic_reconfigure_callback(self, config, level):
-        self.linear_max = config['linear_max']
-        self.linear_min = config['linear_min']
-        self.angular_max = config['angular_max']
-        self.angular_min = config['angular_min']
-        if config['SetArmjoint']:
-            self.car.set_uart_servo_angle_array(
-                [config['joint1'], config['joint2'], config['joint3'],
-                 config['joint4'], config['joint5'], config['joint6']], run_time=1000)
-        return config
-
     def go_ahead(self, sec):
         vx = 0.5
         vy = 0.0
@@ -275,6 +199,20 @@ class sofiia_car_driver:
         rate = rospy.Rate(20)
         while not rospy.is_shutdown():
             if self.last_speech_cmd is not None:
+                rospy.loginfo(f"Battery: {self.battery_voltage:.2f} V")
+
+                if self.battery_voltage <= self.battery_threshold_all:
+                    print("My battery is critically low. I need to shut down. Please recharge me now.")
+                    self.last_speech_cmd = None
+                    rate.sleep()
+                    continue
+
+                if self.battery_voltage <= self.battery_threshold_for_arm and 17 <= self.last_speech_cmd <= 31:
+                    print("My battery is low. I can still move and signal, but I can't use my arm.")
+                    self.last_speech_cmd = None
+                    rate.sleep()
+                    continue 
+
                 #stop
                 if self.last_speech_cmd == 0:
                     vx = 0.0
@@ -392,7 +330,7 @@ class sofiia_car_driver:
 
                 #move arm up
                 elif self.last_speech_cmd == 17:
-                    self.voice_arm.arm_up() 
+                    self.voice_arm.arm_up()
 
                 #move arm down
                 elif self.last_speech_cmd == 18:

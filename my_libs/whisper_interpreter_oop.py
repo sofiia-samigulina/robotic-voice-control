@@ -5,6 +5,7 @@ import soxr
 from constants import MIC_SAMPLERATE, MODEL_SAMPLERATE, DEVICE, BLOCKSIZE, MIN_SAMPLES, FRAME_DURATION
 from queue import Empty
 from collections import deque
+import time
 
 class WhisperSpeech(Speech_Base):
 
@@ -14,7 +15,6 @@ class WhisperSpeech(Speech_Base):
         output_block = soxr.resample(input_block, in_rate, out_rate)
         return output_block.astype(np.float32) 
     
-
     def get_rms(self, pcm_16bit):
         audio = np.frombuffer(pcm_16bit, dtype=np.int16).astype(np.float32) / 32768.0
         return float(np.sqrt(np.mean(audio ** 2)) + 1e-10)
@@ -90,7 +90,7 @@ class WhisperSpeech(Speech_Base):
                         block,
                         samplerate=MIC_SAMPLERATE,
                         frame_duration_ms=FRAME_DURATION,
-                        threshold=0.6
+                        threshold=0.8
                     )
 
                     if not vad_boot:
@@ -103,7 +103,7 @@ class WhisperSpeech(Speech_Base):
 
                     continue
 
-                vad_ok = self.vad_has_speech(block, samplerate=MIC_SAMPLERATE, frame_duration_ms=FRAME_DURATION, threshold=0.6)
+                vad_ok = self.vad_has_speech(block, samplerate=MIC_SAMPLERATE, frame_duration_ms=FRAME_DURATION, threshold=0.8)
                 loud_enough = self.is_louder_than_background(rms)
                 has_speech = vad_ok and loud_enough
 
@@ -175,6 +175,7 @@ class WhisperSpeech(Speech_Base):
         return None
                 
     def speech_recognize(self, audio_buffer):
+        start = time.time()
         print("Sent to transcribe, please wait")
         result = self.model.transcribe(
             audio_buffer,
@@ -187,6 +188,8 @@ class WhisperSpeech(Speech_Base):
                 ", ".join(self.commands.keys()) +
                 ". Output only one command.")
             )
+        end = time.time()
+        print(f"Time for recognition {end-start:.2f} sec")
         return result["text"]
     
     def speech_read(self):
@@ -194,8 +197,6 @@ class WhisperSpeech(Speech_Base):
         if audio_buffer is None:
             return -1
         text = self.speech_recognize(audio_buffer)
-        if text == "":
-            return -1
         output = self.handle_command(text)                       
         return output
         

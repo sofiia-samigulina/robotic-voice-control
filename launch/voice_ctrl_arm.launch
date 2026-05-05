@@ -1,6 +1,5 @@
 <launch>
     
     <node pkg="voice_ctrl_sofiia" type="voice_Ctrl_Sofiia.py" name="voice_ctrl_arm_node" required="true" output="screen"/>
-    
 
 </launch>

@@ -9,6 +9,10 @@ VOSK = Model(VOSK_PATH)
 #create factory
 factory = SpeechFactory()
 
-speech = factory.create_speech("whisper", WHISPER)
+speech = factory.create_speech("vosk", VOSK)
 
-speech.speech_read()
+try:
+    while True:
+        speech.speech_read()
+except KeyboardInterrupt:
+    print("finish")
