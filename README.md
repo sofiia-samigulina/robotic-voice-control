@@ -3,14 +3,17 @@ Implementation of Voice Control of the Rosmaster X3 Plus Smart Robot
 
 This project demonstrates my programming skills in Python and robotics control using ROS. It was created as a portfolio project to show navigation logic, object handling and speech interaction. 
 
+Based on the analysis, Vosk with grammar showed the best accuracy and response time.
+[View Power BI analysis](https://github.com/sofiia-samigulina/robotic-voice-control/blob/main/analysis_power_bi/analysis_report.pdf)
+
 # Technologies 
-Python
-ROS
-Linux
-Whisper
-VOSK
-Yolo
-threading
+- Python
+- ROS
+- Linux
+- Speech recognition models: Whisper and Vosk
+- Computer vision and YOLO model for object detection
+- multithreading
+- Power BI for models analysis
 
 # Hardware requirements
 
