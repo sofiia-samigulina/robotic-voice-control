@@ -31,7 +31,7 @@ VOSK = Model(VOSK_PATH)
 
 car = Rosmaster()
 factory = SpeechFactory()
-spe = factory.create_speech("vosk", VOSK)
+spe = factory.create_speech("Vosk", VOSK)
 sleep(1.0)
 
 class sofiia_car_driver:
@@ -88,6 +88,13 @@ class sofiia_car_driver:
         self.win = "YOLO"
         self.state = "IDLE"
 
+        #latency
+        self.start = 0
+        self.end = 0
+
+        #go forward
+        self.go_ahead_until = 0
+
     def pub_battery_voltage(self):
         ## Publish the battery voltage
         while not rospy.is_shutdown() and not self.spe.stop_evt.is_set():
@@ -103,15 +110,29 @@ class sofiia_car_driver:
         if not isinstance(msg, ArmJoint): return
         if len(msg.joints) != 0:
             self.car.set_uart_servo_angle_array(msg.joints, msg.run_time)
+            self.end = time.perf_counter()
         else:
             self.car.set_uart_servo_angle(msg.id, msg.angle, msg.run_time)
+            self.end = time.perf_counter()
+
+        #but we need only first log in the commands where are a lot of actions
+        #if self.end !=0:
+        #    rospy.loginfo(f"Speech recognition latency: {self.end - self.start}")
+
         sleep(0.001)
 
     def listen_speech(self):
         while not rospy.is_shutdown() and not self.spe.stop_evt.is_set():
             try: 
-                speech_r = self.spe.speech_read()
-                self.last_speech_cmd = speech_r
+                result = self.spe.speech_read()
+
+                if result is None:
+                    continue
+
+                if not isinstance(result, tuple) or len(result) != 2:
+                    continue
+
+                self.last_speech_cmd, self.start = result
             except KeyboardInterrupt:
                 break
             except Exception as e:
@@ -152,26 +173,28 @@ class sofiia_car_driver:
         vy = 0.0
         angular = 0
         self.car.set_car_motion(vx, vy, angular)
-        rospy.sleep(sec)
-        vx = 0
-        vy = 0
-        angular = 0  
-        self.car.set_car_motion(vx, vy, angular)
-    
+        self.go_ahead_until = time.perf_counter() + sec
+
     def main_loop(self):
         rate = rospy.Rate(20)
         while not rospy.is_shutdown():
-            if self.last_speech_cmd is not None:
-                rospy.loginfo(f"Battery: {self.battery_voltage:.2f} V")
+            if self.go_ahead_until > 0:
+                if time.perf_counter() >= self.go_ahead_until:
+                    #stop the car
+                    self.car.set_car_motion(0, 0, 0)
+                    self.go_ahead_until = 0
 
-                #stop
+            if self.last_speech_cmd is not None:
+
+                #stop bude fungovat ak hovorit hlasnejsie
                 if self.last_speech_cmd == 0:
                     vx = 0.0
                     vy = 0.0
                     angular = 0
                     self.car.set_car_motion(vx, vy, angular)
+                    self.go_ahead_until = 0
 
-                #go ahead
+                #go forward
                 elif self.last_speech_cmd == 1:
                     self.go_ahead(3)
 
@@ -269,7 +292,14 @@ class sofiia_car_driver:
 
                 #display battery value
                 elif self.last_speech_cmd == 15:
-                    self.car.set_colorful_effect(6, 6, parm=1)
+                    if self.battery_voltage >= 11.8:
+                        self.car.set_colorful_lamps(0xFF,0,255,0)
+                    elif 11.0 >= self.battery_voltage < 11.8:
+                        self.car.set_colorful_lamps(0xFF,255,255,0)
+                    elif self.battery_voltage < 11.0:
+                        self.car.set_colorful_lamps(0xFF,255,0,0)
+                    
+                    rospy.loginfo(f"My battery is: {self.battery_voltage:.2f} V")
 
                 #beep 3 times
                 elif self.last_speech_cmd == 16:

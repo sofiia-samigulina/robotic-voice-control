@@ -39,11 +39,11 @@ class VoskSpeechGrammar(Speech_Base):
                     while not self.stop_evt.is_set():
                         try:
                             data = self.q.get(timeout=0.1)
+                            start = time.perf_counter()
                         except Empty: continue
                         data_resampled = self.resample_soxr(data, MIC_SAMPLERATE, MODEL_SAMPLERATE)
 
                         if self.rec.AcceptWaveform(data_resampled):
-                            start = time.time()
                             text = json.loads(self.rec.Result()).get("text", "")
 
                             if text == "":
@@ -53,11 +53,8 @@ class VoskSpeechGrammar(Speech_Base):
                         
                             if output == -1:
                                 continue
-                        
-                            end = time.time()
-                            print(f"Time for recognition {end-start:.2f} sec")
                             
-                            return output
+                            return output, start
                         
 class VoskSpeechUsual(Speech_Base):
     def __init__(self, model):
@@ -89,11 +86,11 @@ class VoskSpeechUsual(Speech_Base):
                     while not self.stop_evt.is_set():
                         try:
                             data = self.q.get(timeout=0.1)
+                            start = time.perf_counter()
                         except Empty: continue
                         data_resampled = self.resample_soxr(data, MIC_SAMPLERATE, MODEL_SAMPLERATE)
 
                         if self.rec.AcceptWaveform(data_resampled):
-                            start = time.time()
                             text = json.loads(self.rec.Result()).get("text", "")
 
                             if text == "":
@@ -104,8 +101,6 @@ class VoskSpeechUsual(Speech_Base):
                             if output == -1:
                                 continue
                             
-                            end = time.time()
-                            print(f"Time for recognition {end-start:.2f} sec")
-                            return output
+                            return output,start
 
  

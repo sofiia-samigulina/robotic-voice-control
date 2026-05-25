@@ -145,6 +145,7 @@ class WhisperSpeech(Speech_Base):
                 min_raw_samples = (MIN_SAMPLES * (MIC_SAMPLERATE / MODEL_SAMPLERATE))
 
                 if speech_started and current_raw_samples > min_raw_samples and silence_blocks >= max_silence_blocks:
+                    start = time.perf_counter()
                     raw_audio = b"".join(raw_chunks)
 
                     raw_chunks = []
@@ -171,11 +172,10 @@ class WhisperSpeech(Speech_Base):
                         print("Too short")
                         continue
 
-                    return audio_buffer
+                    return audio_buffer, start
         return None
                 
     def speech_recognize(self, audio_buffer):
-        start = time.time()
         print("Sent to transcribe, please wait")
         result = self.model.transcribe(
             audio_buffer,
@@ -188,16 +188,14 @@ class WhisperSpeech(Speech_Base):
                 ", ".join(self.commands.keys()) +
                 ". Output only one command.")
             )
-        end = time.time()
-        print(f"Time for recognition {end-start:.2f} sec")
         return result["text"]
     
     def speech_read(self):
-        audio_buffer = self.listen_speech()
+        audio_buffer, start = self.listen_speech()
         if audio_buffer is None:
             return -1
         text = self.speech_recognize(audio_buffer)
         output = self.handle_command(text)                       
-        return output
+        return output, start
         
                     
