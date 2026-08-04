@@ -34,6 +34,6 @@ This project requires a Rosmaster X3 Plus robotic car. Without this car the proj
 
 This repository is for educational and portfolio purposes. For technical evaluation during job interviews, full access can be provided upon request.
 
-# Author
+## Author
 
 Sofiia Samigulina
