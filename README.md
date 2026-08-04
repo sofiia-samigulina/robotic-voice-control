@@ -3,7 +3,7 @@
 This project implements a voice-controlled robotic system for the Rosmaster X3 Plus, enabling real-time navigation and object manipulation through speech commands. It integrates speech recognition (Vosk, Whisper), computer vision (YOLO), and ROS-based control into a single pipeline.
 
 Based on the analysis, Vosk with grammar showed the best accuracy and response time.
-[View Power BI analysis](https://github.com/sofiia-samigulina/robotic-voice-control/blob/main/analysis_power_bi/analysis_report.pdf)
+[View Power BI analysis](https://github.com/sofiia-samigulina/robotic-voice-control/blob/main/analysis_power_bi/findings.pdf)
 
 ## Technologies 
 - Python
